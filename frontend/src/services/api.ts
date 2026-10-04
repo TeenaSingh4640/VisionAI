@@ -59,4 +59,6 @@ export const api = {
     }),
   preferences: (session_id: string, prefs: Partial<UserPreferences>) =>
     json(`${API}/session/${session_id}/preferences`, { method: "PATCH", body: JSON.stringify(prefs) }),
+  location: (session_id: string, location: { lat: number; lon: number; heading?: number; accuracy_m?: number; timestamp?: string; simulated?: boolean }) =>
+    json(`${API}/location`, { method: "POST", body: JSON.stringify({ session_id, location }) }),
 };

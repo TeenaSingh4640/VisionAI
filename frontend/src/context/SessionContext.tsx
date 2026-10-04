@@ -1,7 +1,7 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../services/api";
-import { speak } from "../services/voice";
-import type { HealthInfo, SessionState, UserPreferences } from "../types";
+import { enqueueAudioEvent, speak } from "../services/voice";
+import type { AudioEvent, HealthInfo, SessionState, UserPreferences } from "../types";
 
 interface SessionContextValue {
   health: HealthInfo | null;
@@ -34,7 +34,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [developerMode, setDeveloperMode] = useState(false);
   const [cameraSource, setCameraSource] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
-  const lastSpokenRef = useRef("");
+  const voiceRateRef = useRef(1);
+  voiceRateRef.current = session?.user_preferences.voice_rate ?? 1;
 
   const retryHealth = useCallback(async () => {
     try {
@@ -65,11 +66,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (data.type === "session") {
         const next = data.payload as SessionState;
         setSession(next);
-        const msg = next.last_alert;
-        if (msg?.speak && msg.text && msg.text !== lastSpokenRef.current) {
-          lastSpokenRef.current = msg.text;
-          speak(msg.text, next.user_preferences.voice_rate);
-        }
+      } else if (data.type === "audio_event") {
+        enqueueAudioEvent(data.payload as AudioEvent, voiceRateRef.current);
       }
     };
     ws.onclose = () => {
@@ -97,6 +95,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     async (command: string) => {
       if (!session) return;
       await api.command(session.session_id, command);
+      if (command.trim().toLowerCase() === "repeat" && session.last_alert?.text) {
+        speak(session.last_alert.text, session.user_preferences.voice_rate, true);
+      }
     },
     [session],
   );

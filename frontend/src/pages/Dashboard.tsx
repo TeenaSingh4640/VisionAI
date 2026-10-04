@@ -1,78 +1,79 @@
-import { useSession } from "../context/SessionContext";
-import { AgentActivityPanel } from "../components/AgentActivityPanel";
-import { CameraPanel } from "../components/CameraPanel";
-import { Controls } from "../components/Controls";
-import { DemoPanel } from "../components/DemoPanel";
+import { Link } from "react-router-dom";
+import { ArrowRight, AudioLines, Camera, ChevronRight, LocateFixed, Mic, Settings2, Sparkles, Volume2 } from "lucide-react";
 import { Header } from "../components/Header";
-import { NavigationCard } from "../components/NavigationCard";
-import { Card, StatusPill } from "../components/ui";
+import { useSession } from "../context/SessionContext";
+import { listenOnce, speak } from "../services/voice";
 
-const ASSIST_LABEL: Record<string, string> = {
-  idle: "Assistant ready",
-  starting: "Starting",
-  active: "Assistant ready",
-  paused: "Paused",
-  processing: "Analyzing scene",
-  attention_required: "Attention required",
-  degraded: "Degraded mode",
-  stopped: "Stopped",
-  error: "Error",
-};
+function saveDisplayPreference(key: string, value: string) {
+  document.documentElement.dataset[key] = value;
+  try {
+    const stored = JSON.parse(localStorage.getItem("visionmate-comfort") || "{}");
+    localStorage.setItem("visionmate-comfort", JSON.stringify({ ...stored, [key === "text" ? "textSize" : "contrast"]: value }));
+  } catch { /* The visual preference still applies for this page. */ }
+}
 
 export default function Dashboard() {
-  const { session, connected, error, retryHealth } = useSession();
-  const hazard = session?.active_hazards[0];
-  const assist = ASSIST_LABEL[session?.session_status || (connected ? "idle" : "error")] || "Assistant ready";
+  const { session, connected, start, sendCommand, loadDemo } = useSession();
+  const ready = session?.session_status === "active";
+  const message = session?.last_alert?.text || "Tap the main button below or speak naturally anytime.";
+
+  async function begin() {
+    if (!session || session.session_status === "stopped") await start("Demo destination", true);
+    else await sendCommand("resume");
+  }
+
+  async function voiceCommand() {
+    try { await sendCommand(await listenOnce()); }
+    catch { speak("Voice commands are unavailable. Tap Start Assistance to begin.", session?.user_preferences.voice_rate || 1, true); }
+  }
+
   return (
-    <div className="min-h-screen">
+    <div className="screen">
       <Header />
-      <main className="mx-auto grid max-w-7xl gap-4 p-4 lg:grid-cols-3">
-        {!connected && (
-          <div className="lg:col-span-3 rounded-2xl border border-urgent/40 bg-urgent/10 p-4" role="alert">
-            <p>{error || "Backend disconnected. Results are not current."}</p>
-            <button className="mt-2 underline" onClick={() => void retryHealth()}>
-              Retry connection
-            </button>
-          </div>
-        )}
-        <div className="space-y-4 lg:col-span-2">
-          <CameraPanel />
-          <Card title="Assistance status">
-            <div className="flex flex-wrap items-center gap-3">
-              <StatusPill
-                label={assist}
-                tone={session?.session_status === "attention_required" ? "urgent" : session?.session_status === "paused" ? "caution" : "ok"}
-              />
-              <p className="text-sm text-slate-300">Activity: {session?.current_agent_step || "idle"}</p>
-            </div>
-            <p className="mt-3 text-slate-200">{session?.last_alert?.text || "No spoken instruction yet."}</p>
-            <p className="mt-2 text-sm text-slate-400">
-              Latest environmental event: {session?.event_history.at(-1)?.summary || "None"}
-            </p>
-            {hazard && (
-              <p className="mt-2 text-sm text-caution">
-                Hazard: {hazard.classification.replaceAll("_", " ")} · uncertainty {Math.round(hazard.uncertainty * 100)}%
-              </p>
-            )}
-          </Card>
-          <Controls />
-          <DemoPanel />
+      <main className="app-main home-main">
+        {!connected && <div className="connection-banner" role="alert">Backend disconnected. Current visual results may be out of date.</div>}
+        <div className="accessibility-shortcuts" aria-label="Display shortcuts">
+          <span className="shortcut-label">Display</span>
+          <button onClick={() => saveDisplayPreference("text", "standard")}>◉ Standard</button>
+          <button onClick={() => saveDisplayPreference("text", "large")}>Tt Large</button>
+          <button onClick={() => saveDisplayPreference("contrast", document.documentElement.dataset.contrast === "high" ? "standard" : "high")}>◐ Contrast</button>
         </div>
-        <div className="space-y-4">
-          <NavigationCard />
-          <AgentActivityPanel />
-          <Card title="Recent events">
-            <ul className="space-y-2 text-sm">
-              {(session?.event_history || []).slice(-8).reverse().map((e, i) => (
-                <li key={`${e.timestamp}-${i}`}>
-                  <span className="text-slate-500">{e.type}</span> — {e.summary}
-                  {e.simulated ? " (simulated)" : ""}
-                </li>
-              ))}
-              {!session?.event_history?.length && <li className="text-slate-500">No events yet.</li>}
-            </ul>
-          </Card>
-        </div>
+
+        <section className="welcome-card">
+          <div className="ready-line"><span className={`status-dot ${ready ? "" : "idle"}`} />{ready ? "Your assistant is ready" : "Your assistant is ready"}<button className="voice-mini" aria-label="Play welcome message" onClick={() => speak(message, session?.user_preferences.voice_rate || 1, true)}><Volume2 size={17} /></button></div>
+          <h1>Hello! I’m ready to help.</h1>
+          <p>{message}</p>
+        </section>
+
+        <button className="start-assistance" onClick={() => void begin()}>
+          <span className="start-icon"><Camera size={23} /></span>
+          <span><strong>{ready ? "Resume Assistance" : "Start Assistance"}</strong><small>Auditory & visual guidance</small></span>
+          <span className="start-arrow"><ArrowRight size={21} /></span>
+        </button>
+        <button className="voice-command" onClick={() => void voiceCommand()}>
+          <span><Mic size={17} /> Or say, <strong>“Start assistance”</strong></span><span className="mic-bubble"><Mic size={18} /></span>
+        </button>
+
+        <section className="quick-section">
+          <h2>Quick Actions</h2>
+          <Link to="/app/scan" className="quick-action">
+            <span className="quick-icon lavender"><Camera size={19} /></span><span><strong>Describe Surroundings</strong><small>Instant audio scene summary</small></span><ChevronRight size={18} />
+          </Link>
+          <Link to="/app/navigate" className="quick-action">
+            <span className="quick-icon mint"><LocateFixed size={19} /></span><span><strong>Navigate to Destination</strong><small>Spatial turns & path alerts</small></span><ChevronRight size={18} />
+          </Link>
+          <Link to="/app/settings" className="quick-action">
+            <span className="quick-icon lavender"><Settings2 size={19} /></span><span><strong>Accessibility Settings</strong><small>Speech speed, haptics & contrast</small></span><ChevronRight size={18} />
+          </Link>
+        </section>
+
+        <a className="help-card" href="tel:112"><span className="help-icon">!</span><span><strong>Need immediate help?</strong><small>Tap to call local emergency services</small></span><span className="help-action">Call 112</span></a>
+
+        {session && <>
+          <details className="demo-scenes"><summary><Sparkles size={15} /> Demo controls <span>Simulated scenes</span></summary><div>{[{ id: "clear", label: "Clear" }, { id: "blocked", label: "Blocked" }, { id: "uncertain", label: "Uncertain" }, { id: "obstacle_removed", label: "Cleared" }].map((scene) => <button key={scene.id} onClick={() => void loadDemo(scene.id)}>{scene.label}</button>)}</div></details>
+          {!!session.activity.length && <section className="home-activity"><div><strong>Agentic AI Activity</strong><Link to="/app/assist">View details <ChevronRight size={13} /></Link></div>{session.activity.slice(-2).reverse().map((item, i) => <p key={`${item.timestamp}-${i}`}><span>{item.agent}</span> {item.result || item.reason}{item.simulated ? " · simulated" : ""}</p>)}</section>}
+          <div className="home-footnote"><Sparkles size={14} /> {session.demo_mode ? "Demo mode · simulated scenes are labeled" : "Live assistance session"}<Link to="/app/assist"><AudioLines size={15} /> Guidance</Link></div>
+        </>}
       </main>
     </div>
   );

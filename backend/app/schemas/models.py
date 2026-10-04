@@ -98,6 +98,9 @@ class HazardEvent(BaseModel):
 class RouteInstruction(BaseModel):
     instruction: str
     distance_m: float
+    maneuver_type: str | None = None
+    maneuver_modifier: str | None = None
+    maneuver_location: list[float] | None = None
 
 
 class RouteResult(BaseModel):
@@ -156,6 +159,19 @@ class LocationFix(BaseModel):
     heading: float | None = None
     accuracy_m: float | None = None
     timestamp: str | None = None
+    simulated: bool = False
+
+
+class AudioEvent(BaseModel):
+    event_id: str
+    source: Literal["object_detection", "navigation", "system"]
+    category: Literal["object_announcement", "hazard_alert", "turn_instruction", "route_update", "system_alert"]
+    priority: int = Field(ge=1, le=4)
+    text: str = Field(min_length=1, max_length=240)
+    created_at: str
+    expires_after_ms: int = Field(ge=500, le=60_000)
+    deduplication_key: str = Field(min_length=1, max_length=160)
+    simulated: bool = False
 
 
 def utc_now() -> str:

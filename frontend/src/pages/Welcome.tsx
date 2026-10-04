@@ -1,51 +1,15 @@
 import { Link } from "react-router-dom";
-import { Eye, Mic, ShieldAlert, Camera } from "lucide-react";
-import { BigButton, Logo } from "../components/ui";
+import { ArrowRight, AudioLines, Camera, Eye, ShieldCheck } from "lucide-react";
 
 export default function Welcome() {
   return (
-    <main className="min-h-screen bg-navy-950 px-4 py-10">
-      <div className="mx-auto max-w-3xl">
-        <Logo />
-        <h1 className="font-display mt-8 text-4xl font-semibold leading-tight md:text-5xl">
-          See the surroundings. Understand the situation. Navigate with awareness.
-        </h1>
-        <p className="mt-4 text-lg text-slate-300">
-          VisionMate is an experimental visual assistance prototype. It combines camera perception, conservative hazard
-          rules, and an agent orchestrator that can check mapped routes and speak cautious guidance.
-        </p>
-        <ul className="mt-8 grid gap-4 sm:grid-cols-2">
-          {[
-            { icon: Camera, t: "Perception", d: "Detects selected objects from sampled camera or demo frames." },
-            { icon: ShieldAlert, t: "Hazard assessment", d: "Uses deterministic heuristics. It does not measure distance." },
-            { icon: Eye, t: "Agentic tools", d: "Chooses observation, routing, or communication based on context." },
-            { icon: Mic, t: "Voice assistance", d: "Speaks concise templates and accepts basic voice commands." },
-          ].map((item) => (
-            <li key={item.t} className="rounded-2xl border border-slate-700 bg-navy-900 p-4">
-              <item.icon className="text-accent" />
-              <h2 className="mt-2 font-display text-lg">{item.t}</h2>
-              <p className="text-sm text-slate-400">{item.d}</p>
-            </li>
-          ))}
-        </ul>
-        <aside className="mt-8 rounded-2xl border border-caution/50 bg-caution/10 p-4" role="note">
-          <h2 className="font-display text-lg text-caution">Safety disclaimer</h2>
-          <p className="mt-2 text-slate-200">
-            This is a hackathon prototype, not a certified mobility aid. It must not be used for unsupervised real-world
-            navigation. Routes are never guaranteed safe. Camera and microphone access stay on-device except for sampled
-            frames sent to your local backend.
-          </p>
-        </aside>
-        <p className="mt-6 text-sm text-slate-400">
-          Get Started will request camera and microphone only when you use those features. You can run a fully simulated
-          demonstration without a camera.
-        </p>
-        <div className="mt-6">
-          <Link to="/app">
-            <BigButton>Get Started</BigButton>
-          </Link>
-        </div>
-      </div>
+    <main className="welcome-screen">
+      <div className="welcome-brand"><span><Eye size={22} /></span><div><strong>VisionMate</strong><small>Visual assistance</small></div><i>● READY</i></div>
+      <div className="welcome-hero"><div className="hero-mark"><Eye size={34} /></div><p className="hero-eyebrow">SEE · UNDERSTAND · NAVIGATE</p><h1>Move through your day with more awareness.</h1><p>VisionMate describes selected objects and offers cautious, spoken guidance from your camera view.</p></div>
+      <div className="welcome-features"><div><span><Camera size={18} /></span><p><strong>Scene awareness</strong><small>Sampled camera or controlled demo scenes</small></p></div><div><span><AudioLines size={18} /></span><p><strong>Voice first</strong><small>Listen to concise updates and guidance</small></p></div><div><span><ShieldCheck size={18} /></span><p><strong>You stay in control</strong><small>Mapped routes are shown for review only</small></p></div></div>
+      <aside className="welcome-safety"><strong>Prototype safety</strong><p>This is an experimental demo, not a certified mobility aid. Do not rely on it for outdoor navigation.</p></aside>
+      <Link className="welcome-continue" to="/app">Get Started <ArrowRight size={18} /></Link>
+      <p className="welcome-privacy">Camera permission is requested only when you start camera preview. You can try demo mode without a camera.</p>
     </main>
   );
 }

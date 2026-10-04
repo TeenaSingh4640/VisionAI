@@ -70,23 +70,29 @@ class MockRoutingProvider(RoutingProvider):
             )
         geometry = [
             [origin[1], origin[0]],
-            [origin[1] + 0.0008, origin[0] + 0.0008],
+            [origin[1], origin[0] + 0.0045],
             [destination[1], destination[0]],
         ]
         return RouteResult(
-            route_id="route_mock_01",
+            route_id=str(uuid4()),
             provider="mock",
             status="available",
             distance_m=850,
             duration_s=720,
             instructions=[
                 RouteInstruction(
-                    instruction="Continue along the current mapped route",
-                    distance_m=100,
+                    instruction="Turn right on the mapped route",
+                    distance_m=500,
+                    maneuver_type="turn",
+                    maneuver_modifier="right",
+                    maneuver_location=[origin[1], origin[0] + 0.0045],
                 ),
                 RouteInstruction(
                     instruction="Mapped destination remains ahead. Review surroundings independently.",
-                    distance_m=750,
+                    distance_m=350,
+                    maneuver_type="arrive",
+                    maneuver_modifier="straight",
+                    maneuver_location=[destination[1], destination[0]],
                 ),
             ],
             geometry=geometry,
@@ -148,7 +154,13 @@ class OSRMRoutingProvider(RoutingProvider):
             for step in leg.get("steps") or []:
                 man = step.get("maneuver", {})
                 instruction = man.get("instruction") or man.get("type") or "Continue along mapped route"
-                steps.append(RouteInstruction(instruction=str(instruction), distance_m=float(step.get("distance") or 0)))
+                location = man.get("location")
+                steps.append(RouteInstruction(
+                    instruction=str(instruction), distance_m=float(step.get("distance") or 0),
+                    maneuver_type=str(man.get("type")) if man.get("type") else None,
+                    maneuver_modifier=str(man.get("modifier")) if man.get("modifier") else None,
+                    maneuver_location=[float(location[0]), float(location[1])] if isinstance(location, list) and len(location) >= 2 else None,
+                ))
         if not steps:
             steps = [RouteInstruction(instruction="Continue along the current mapped route", distance_m=float(chosen.get("distance") or 0))]
         return RouteResult(

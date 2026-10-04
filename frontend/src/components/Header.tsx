@@ -1,42 +1,59 @@
-import { NavLink } from "react-router-dom";
-import { Settings as SettingsIcon } from "lucide-react";
+import { NavLink, useLocation } from "react-router-dom";
+import { ArrowLeft, AudioLines, CircleUserRound, Eye, Home as HomeIcon, ScanEye, Settings as SettingsIcon, SlidersHorizontal } from "lucide-react";
 import { useSession } from "../context/SessionContext";
-import { Logo, StatusPill } from "./ui";
 
 export function Header() {
-  const { connected, session, health } = useSession();
-  const status = session?.session_status || (connected ? "idle" : "error");
-  const tone =
-    status === "attention_required" || status === "error"
-      ? "urgent"
-      : status === "paused" || status === "degraded"
-        ? "caution"
-        : connected
-          ? "ok"
-          : "urgent";
+  const { connected, session } = useSession();
+  const location = useLocation();
+  const title = location.pathname.includes("settings")
+    ? "Profile settings"
+    : location.pathname.includes("navigate")
+      ? "Navigation"
+      : location.pathname.includes("scan")
+        ? "Object scanner"
+        : location.pathname.includes("assist")
+          ? "Live guidance"
+          : "Home guidance";
+
   return (
-    <header className="sticky top-0 z-20 border-b border-slate-800 bg-navy-950/95 px-4 py-3 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
-        <Logo />
-        <nav className="hidden items-center gap-4 text-sm md:flex" aria-label="Primary">
-          <NavLink className="hover:text-white" to="/app">
-            Dashboard
+    <header className="mobile-header">
+      <div className="brand-lockup">
+        {location.pathname !== "/app" && (
+          <NavLink to="/app" className="icon-button back-button" aria-label="Back to home">
+            <ArrowLeft size={20} />
           </NavLink>
-          <NavLink className="hover:text-white" to="/app/assist">
-            Live assistance
-          </NavLink>
-          <NavLink className="hover:text-white" to="/app/navigate">
-            Navigation
-          </NavLink>
-        </nav>
-        <div className="flex items-center gap-3">
-          <StatusPill label={connected ? `System ${status.replace("_", " ")}` : "Backend disconnected"} tone={tone} />
-          {health && <span className="hidden text-xs text-slate-400 lg:inline">Perception: {health.perception}</span>}
-          <NavLink to="/app/settings" aria-label="Settings" className="rounded-xl border border-slate-700 p-2">
-            <SettingsIcon size={20} />
-          </NavLink>
+        )}
+        <span className="brand-icon"><Eye size={19} aria-hidden /></span>
+        <div className="brand-copy">
+          <div className="brand-name">VisionMate <span className={`live-chip ${connected ? "is-live" : "is-offline"}`}>{connected ? "● LIVE" : "● OFFLINE"}</span></div>
+          <div className="brand-subtitle">{title}</div>
         </div>
       </div>
+      <div className="header-actions">
+        <a className="sos-button" href="tel:112" aria-label="Call emergency services">SOS</a>
+        <NavLink to="/app/settings" className="icon-button profile-button" aria-label="Open profile settings">
+          {session ? <CircleUserRound size={19} /> : <SettingsIcon size={18} />}
+        </NavLink>
+      </div>
     </header>
+  );
+}
+
+export function BottomNav() {
+  const tabs = [
+    { to: "/app", label: "Home", Icon: HomeIcon, end: true },
+    { to: "/app/scan", label: "Scan", Icon: ScanEye },
+    { to: "/app/assist", label: "Audio", Icon: AudioLines },
+    { to: "/app/settings", label: "Settings", Icon: SlidersHorizontal },
+  ];
+  return (
+    <nav className="bottom-nav" aria-label="Main navigation">
+      {tabs.map((tab) => (
+        <NavLink key={tab.to} to={tab.to} end={tab.end} className={({ isActive }) => `bottom-tab ${isActive ? "active" : ""}`}>
+          <tab.Icon className="tab-icon" size={19} aria-hidden />
+          <span>{tab.label}</span>
+        </NavLink>
+      ))}
+    </nav>
   );
 }

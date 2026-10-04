@@ -37,6 +37,17 @@ def test_tracker_assigns_stable_ids():
     assert first.track_id == second.track_id
 
 
+def test_demo_tracker_isolated_by_session():
+    from uuid import uuid4
+
+    from app.perception.demo import demo_observation
+
+    first_session, second_session = str(uuid4()), str(uuid4())
+    first = demo_observation("blocked", session_id=first_session).objects[0]
+    second = demo_observation("blocked", session_id=second_session).objects[0]
+    assert first.track_id == second.track_id == 1
+
+
 def test_hazard_clear_scene():
     engine = HazardEngine()
     hazard = engine.assess("s1", _obs([]), True)
@@ -77,3 +88,37 @@ def test_duplicate_message_suppressed():
     assert msg1 is not None
     assert msg2 is None
     assert key2 == key
+
+
+def test_navigation_guidance_requires_accurate_fix_and_deduplicates_threshold():
+    from app.navigation.guidance import guidance_event
+    from app.navigation.service import MockRoutingProvider
+    from app.schemas.models import LocationFix
+
+    route = MockRoutingProvider().get_route((12.9716, 77.5946), (12.9750, 77.6050))
+    turn = route.instructions[0].maneuver_location
+    assert turn is not None
+    announced = set()
+    inaccurate = LocationFix(lat=turn[1] - 0.001, lon=turn[0], accuracy_m=80)
+    assert guidance_event(route, inaccurate, announced) is None
+    fix = LocationFix(lat=turn[1] - 0.004, lon=turn[0], accuracy_m=5, simulated=True)
+    event = guidance_event(route, fix, announced)
+    assert event is not None
+    assert event.category == "turn_instruction"
+    assert event.simulated is True
+    assert guidance_event(route, fix, announced) is None
+
+
+def test_object_voice_waits_for_persistent_detection_and_does_not_claim_signal_state():
+    from types import SimpleNamespace
+    from app.communication.audio_events import object_events
+
+    light = DetectedObject(class_name="traffic light", confidence=.9,
+                           bbox=BoundingBox(x1=.4, y1=.2, x2=.6, y2=.5), track_id=3)
+    session = SimpleNamespace(object_track_streaks={}, announced_audio_keys=set())
+    obs = _obs([light])
+    assert object_events(session, obs) == []
+    events = object_events(session, obs)
+    assert len(events) == 1
+    assert "signal state is not assessed" in events[0].text
+    assert object_events(session, obs) == []

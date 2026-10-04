@@ -14,9 +14,11 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     perception_mode: Literal["auto", "yolo", "mock"] = "auto"
-    yolo_model: str = "yolov8n.pt"
+    yolo_model: str = "yolo11s.pt"
+    yolo_confidence: float = 0.2
+    yolo_max_detections: int = 100
     frame_max_bytes: int = 2_500_000
-    inference_max_side: int = 640
+    inference_max_side: int = 960
 
     routing_provider: Literal["mock", "osrm"] = "mock"
     osrm_base_url: str = "https://router.project-osrm.org"
@@ -24,6 +26,7 @@ class Settings(BaseSettings):
 
     sqlite_path: str = ""
     obs_min_interval_ms: int = 350
+    turn_thresholds_m: str = "500,200,100,30"
 
     @property
     def cors_origin_list(self) -> list[str]:

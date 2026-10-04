@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import time
+import threading
+from starlette.concurrency import run_in_threadpool
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -8,9 +11,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.agents.orchestrator import run_observation_cycle, DEFAULT_DEST, DEFAULT_ORIGIN
 from app.communication.service import CommunicationService, TEMPLATES
+from app.communication.audio_events import hazard_audio, object_events
 from app.core.config import get_settings
 from app.events.broker import broker
 from app.navigation.service import get_navigation_service
+from app.navigation.guidance import guidance_event
 from app.perception.demo import decode_image, demo_observation
 from app.perception.engine import get_perception_engine
 from app.schemas.api import (
@@ -30,6 +35,9 @@ from app.storage.sessions import store
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("visionmate")
+_observation_times: dict[str, float] = {}
+_observation_times_lock = threading.Lock()
+_observation_inflight: dict[str, threading.Lock] = {}
 
 SAFETY = (
     "VisionMate is a hackathon prototype, not a certified mobility aid. "
@@ -70,11 +78,11 @@ def run_scene_cycle(session, scene: str, simulate_route_failure: bool = False):
     """Blocked scenes run two observations so persistence can trigger a route check."""
     target = "blocked" if scene == "route_failure" else scene
     if target == "blocked":
-        first = run_observation_cycle(session, demo_observation("blocked"), simulate_route_failure)
-        second = run_observation_cycle(session, demo_observation("blocked"), simulate_route_failure)
+        first = run_observation_cycle(session, demo_observation("blocked", session_id=session.session_id), simulate_route_failure)
+        second = run_observation_cycle(session, demo_observation("blocked", session_id=session.session_id), simulate_route_failure)
         second["activity"] = (first.get("activity") or []) + (second.get("activity") or [])
         return second
-    return run_observation_cycle(session, demo_observation(target), simulate_route_failure)
+    return run_observation_cycle(session, demo_observation(target, session_id=session.session_id), simulate_route_failure)
 
 
 @app.get("/api/health")
@@ -84,6 +92,9 @@ async def health():
         "ok": True,
         "app": settings.app_name,
         "perception": engine.mode,
+        "perception_model": engine.model_name,
+        "inference_max_side": settings.inference_max_side,
+        "detection_confidence_threshold": settings.yolo_confidence,
         "routing": get_navigation_service().provider.name,
         "safety": SAFETY,
     }
@@ -128,21 +139,48 @@ async def submit_observation(body: ObservationRequest):
         raise HTTPException(404, "Unknown session")
     if session.session_status in {"stopped", "paused"}:
         raise HTTPException(409, f"Session is {session.session_status}")
-    session.session_status = "processing"
     if body.demo_scene:
-        result = run_scene_cycle(session, body.demo_scene, session.simulate_route_failure)
-    elif body.image_base64:
+        if body.demo_scene not in {"clear", "blocked", "uncertain", "pedestrian", "obstacle_removed", "route_failure"}:
+            raise HTTPException(422, "Unknown demo scene")
+        session.session_status = "processing"
         try:
-            frame = decode_image(body.image_base64)
+            result = await run_in_threadpool(run_scene_cycle, session, body.demo_scene, session.simulate_route_failure)
         except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        observation = get_perception_engine().analyze_frame(frame, f"frame_{utc_now()}")
-        if body.force_quality:
-            observation.quality = body.force_quality  # type: ignore[assignment]
-        result = run_observation_cycle(session, observation, simulate_route_failure=session.simulate_route_failure)
+            raise HTTPException(422, str(exc)) from exc
+    elif body.image_base64:
+        with _observation_times_lock:
+            session_lock = _observation_inflight.setdefault(session.session_id, threading.Lock())
+        if not session_lock.acquire(blocking=False):
+            raise HTTPException(429, "A camera frame is still being processed; stale frames are not queued")
+        now = time.monotonic()
+        try:
+            with _observation_times_lock:
+                previous = _observation_times.get(session.session_id)
+                min_interval = get_settings().obs_min_interval_ms / 1000
+                if previous is not None and now - previous < min_interval:
+                    raise HTTPException(429, "Observation rate limit exceeded; wait before sending another frame")
+            try:
+                frame = decode_image(body.image_base64)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            with _observation_times_lock:
+                _observation_times[session.session_id] = time.monotonic()
+            session.session_status = "processing"
+            observation = await run_in_threadpool(get_perception_engine().analyze_frame, frame, f"frame_{utc_now()}", session.session_id)
+            if body.force_quality:
+                observation.quality = body.force_quality  # type: ignore[assignment]
+            result = await run_in_threadpool(run_observation_cycle, session, observation, session.simulate_route_failure)
+        finally:
+            session_lock.release()
     else:
         raise HTTPException(400, "Provide image_base64 or demo_scene")
     public = session.to_public_dict()
+    for audio in object_events(session, result["observation"]):
+        await emit(session.session_id, "audio_event", audio.model_dump())
+    audio = hazard_audio(result.get("hazard"), session.last_alert.text if session.last_alert and session.last_alert.speak else None,
+                         result["observation"].source in {"demo", "mock"})
+    if audio:
+        await emit(session.session_id, "audio_event", audio.model_dump())
     await emit(session.session_id, "session", public)
     return ObservationResponse(
         observation=result["observation"],
@@ -171,7 +209,15 @@ async def demo_scene(body: DemoSceneRequest):
         session.simulate_route_failure = False
         session.session_status = "active"
         scene = "clear"
-    result = run_scene_cycle(session, scene, session.simulate_route_failure)
+    try:
+        result = await run_in_threadpool(run_scene_cycle, session, scene, session.simulate_route_failure)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    for audio in object_events(session, result["observation"]):
+        await emit(session.session_id, "audio_event", audio.model_dump())
+    audio = hazard_audio(result.get("hazard"), session.last_alert.text if session.last_alert and session.last_alert.speak else None, True)
+    if audio:
+        await emit(session.session_id, "audio_event", audio.model_dump())
     await emit(session.session_id, "session", session.to_public_dict())
     return ObservationResponse(
         observation=result["observation"],
@@ -227,6 +273,9 @@ async def location(body: LocationRequest):
     except KeyError:
         raise HTTPException(404, "Unknown session")
     session.current_location = body.location
+    audio = guidance_event(session.route, body.location, session.nav_announced_thresholds)
+    if audio:
+        await emit(session.session_id, "audio_event", audio.model_dump())
     return GenericOk()
 
 
@@ -246,7 +295,7 @@ async def navigation_route(body: RouteRequest):
     )
     if body.destination:
         session.destination = body.destination
-    result = get_navigation_service().get_route(origin, dest, simulate_failure=body.simulate_failure)
+    result = await run_in_threadpool(get_navigation_service().get_route, origin, dest, simulate_failure=body.simulate_failure)
     session.route = result
     await emit(session.session_id, "session", session.to_public_dict())
     return result
@@ -266,7 +315,7 @@ async def navigation_alt(body: RouteRequest):
         body.dest_lat if body.dest_lat is not None else DEFAULT_DEST[0],
         body.dest_lon if body.dest_lon is not None else DEFAULT_DEST[1],
     )
-    result = get_navigation_service().get_alternative(origin, dest, simulate_failure=body.simulate_failure)
+    result = await run_in_threadpool(get_navigation_service().get_alternative, origin, dest, simulate_failure=body.simulate_failure)
     session.alternative_route = result
     await emit(session.session_id, "session", session.to_public_dict())
     return result

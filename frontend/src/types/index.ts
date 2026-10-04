@@ -47,6 +47,21 @@ export interface HazardEvent {
 export interface RouteInstruction {
   instruction: string;
   distance_m: number;
+  maneuver_type?: string | null;
+  maneuver_modifier?: string | null;
+  maneuver_location?: number[] | null;
+}
+
+export interface AudioEvent {
+  event_id: string;
+  source: "object_detection" | "navigation" | "system";
+  category: "object_announcement" | "hazard_alert" | "turn_instruction" | "route_update" | "system_alert";
+  priority: number;
+  text: string;
+  created_at: string;
+  expires_after_ms: number;
+  deduplication_key: string;
+  simulated: boolean;
 }
 
 export interface RouteResult {
@@ -116,11 +131,15 @@ export interface SessionState {
   session_status: SessionStatus;
   demo_mode: boolean;
   last_observation_at: string | null;
+  current_location?: { lat: number; lon: number; heading?: number | null; accuracy_m?: number | null; simulated?: boolean } | null;
 }
 
 export interface HealthInfo {
   ok: boolean;
   perception: string;
+  perception_model?: string | null;
+  inference_max_side?: number;
+  detection_confidence_threshold?: number;
   routing: string;
   safety: string;
 }

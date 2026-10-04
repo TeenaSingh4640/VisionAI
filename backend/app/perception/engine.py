@@ -29,14 +29,14 @@ SUPPORTED_FOCUS = {
 class PerceptionAdapter(Protocol):
     name: str
 
-    def analyze(self, frame: np.ndarray, frame_id: str) -> Observation: ...
+    def analyze(self, frame: np.ndarray, frame_id: str, session_id: str = "default") -> Observation: ...
 
 
 class BaseDetector(ABC):
     name = "base"
 
     @abstractmethod
-    def analyze(self, frame: np.ndarray, frame_id: str) -> Observation:
+    def analyze(self, frame: np.ndarray, frame_id: str, session_id: str = "default") -> Observation:
         raise NotImplementedError
 
 
@@ -84,9 +84,9 @@ class MockPerception(BaseDetector):
     name = "mock"
 
     def __init__(self) -> None:
-        self.tracker = SimpleIOUTracker()
+        self.trackers: dict[str, SimpleIOUTracker] = {}
 
-    def analyze(self, frame: np.ndarray, frame_id: str) -> Observation:
+    def analyze(self, frame: np.ndarray, frame_id: str, session_id: str = "default") -> Observation:
         start = time.perf_counter()
         h, w = frame.shape[:2]
         mean = float(np.mean(frame)) if frame.size else 0
@@ -100,7 +100,7 @@ class MockPerception(BaseDetector):
         return Observation(
             timestamp=utc_now(),
             frame_id=frame_id,
-            objects=self.tracker.update(objects),
+            objects=self.trackers.setdefault(session_id, SimpleIOUTracker()).update(objects),
             processing_ms=round(ms, 2),
             source="mock",
             quality=quality,
@@ -114,12 +114,20 @@ class YOLOPerception(BaseDetector):
     def __init__(self, model_name: str) -> None:
         from ultralytics import YOLO
 
+        self.model_name = model_name
         self.model = YOLO(model_name)
-        self.tracker = SimpleIOUTracker()
+        self.trackers: dict[str, SimpleIOUTracker] = {}
 
-    def analyze(self, frame: np.ndarray, frame_id: str) -> Observation:
+    def analyze(self, frame: np.ndarray, frame_id: str, session_id: str = "default") -> Observation:
         start = time.perf_counter()
-        results = self.model.predict(frame, verbose=False, imgsz=get_settings().inference_max_side)
+        settings = get_settings()
+        results = self.model.predict(
+            frame,
+            verbose=False,
+            imgsz=settings.inference_max_side,
+            conf=settings.yolo_confidence,
+            max_det=settings.yolo_max_detections,
+        )
         objects: list[DetectedObject] = []
         if results:
             result = results[0]
@@ -144,7 +152,7 @@ class YOLOPerception(BaseDetector):
                             ),
                         )
                     )
-        objects = self.tracker.update(objects)
+        objects = self.trackers.setdefault(session_id, SimpleIOUTracker()).update(objects)
         ms = (time.perf_counter() - start) * 1000
         quality = "ok"
         if not objects and float(np.mean(frame)) < 30:
@@ -163,21 +171,32 @@ class PerceptionEngine:
     def __init__(self) -> None:
         settings = get_settings()
         self.mode = settings.perception_mode
+        self.model_name: str | None = None
         self.backend: BaseDetector
         if self.mode == "mock":
             self.backend = MockPerception()
         else:
             try:
                 self.backend = YOLOPerception(settings.yolo_model)
+                self.model_name = settings.yolo_model
                 self.mode = "yolo"
                 logger.info("Loaded YOLO model %s", settings.yolo_model)
             except Exception as exc:
-                logger.warning("YOLO unavailable (%s); using mock perception", exc)
+                logger.warning("Configured YOLO model %s unavailable (%s)", settings.yolo_model, exc)
+                if settings.yolo_model != "yolov8n.pt":
+                    try:
+                        self.backend = YOLOPerception("yolov8n.pt")
+                        self.model_name = "yolov8n.pt"
+                        self.mode = "yolo-fallback"
+                        logger.warning("Using cached yolov8n.pt fallback model")
+                        return
+                    except Exception as fallback_exc:
+                        logger.warning("YOLO fallback unavailable (%s); using mock perception", fallback_exc)
                 self.backend = MockPerception()
                 self.mode = "mock"
 
-    def analyze_frame(self, frame: np.ndarray, frame_id: str) -> Observation:
-        return self.backend.analyze(frame, frame_id)
+    def analyze_frame(self, frame: np.ndarray, frame_id: str, session_id: str = "default") -> Observation:
+        return self.backend.analyze(frame, frame_id, session_id)
 
 
 _engine: PerceptionEngine | None = None

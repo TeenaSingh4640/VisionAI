@@ -94,3 +94,18 @@ def test_navigation_validation(client: TestClient):
     assert res["status"] in {"available", "requires_review"}
     fail = client.post("/api/navigation/alternative", json={"session_id": sid, "simulate_failure": True}).json()
     assert fail["status"] == "error"
+
+
+def test_location_update_emits_mapped_turn_audio_event(client: TestClient):
+    sid = _start(client)
+    state = client.get(f"/api/session/{sid}/state").json()
+    turn_lon, turn_lat = state["route"]["instructions"][0]["maneuver_location"]
+    with client.websocket_connect(f"/ws/session/{sid}") as ws:
+        assert ws.receive_json()["type"] == "session"
+        response = client.post("/api/location", json={"session_id": sid, "location": {
+            "lat": turn_lat - 0.004, "lon": turn_lon, "accuracy_m": 5, "simulated": True,
+        }})
+        assert response.status_code == 200
+        message = ws.receive_json()
+        assert message["type"] == "audio_event"
+        assert message["payload"]["category"] == "turn_instruction"

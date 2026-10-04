@@ -41,6 +41,9 @@ class SessionState:
     simulate_route_failure: bool = False
     last_observation_at: str | None = None
     created_at: str = field(default_factory=utc_now)
+    announced_audio_keys: set[str] = field(default_factory=set)
+    object_track_streaks: dict[str, int] = field(default_factory=dict)
+    nav_announced_thresholds: set[str] = field(default_factory=set)
 
     def to_public_dict(self) -> dict:
         return {

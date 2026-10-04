@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from app.schemas.models import (
@@ -36,7 +38,7 @@ class ObservationRequest(BaseModel):
     session_id: str
     image_base64: str | None = None
     demo_scene: str | None = None
-    force_quality: str | None = None
+    force_quality: Literal["ok", "low", "blurry", "dark", "conflicting"] | None = None
 
 
 class ObservationResponse(BaseModel):
@@ -70,7 +72,7 @@ class RouteRequest(BaseModel):
 
 class DemoSceneRequest(BaseModel):
     session_id: str
-    scene: str
+    scene: Literal["clear", "blocked", "uncertain", "pedestrian", "obstacle_removed", "route_failure", "reset"]
     simulate_route_failure: bool = False
 
 

@@ -19,6 +19,7 @@ Map apps give turn-by-turn directions but do not understand a parked motorcycle 
 - LangGraph orchestrator: perception → hazard → optional route tool → communication → monitor
 - Mock routing (optional OSRM)
 - WebSocket activity stream and browser speech
+- Independent GPS turn prompts and a priority-aware, deduplicated voice queue
 - Accessible dark UI with large controls
 
 ## Architecture
@@ -90,16 +91,22 @@ See `backend/.env.example`.
 | Variable | Meaning |
 | --- | --- |
 | `VISIONMATE_PERCEPTION_MODE` | `auto`, `yolo`, or `mock` |
-| `VISIONMATE_YOLO_MODEL` | Ultralytics model name, default `yolov8n.pt` |
+| `VISIONMATE_YOLO_MODEL` | Ultralytics model name, default `yolo11s.pt`; falls back to `yolov8n.pt` if unavailable |
+| `VISIONMATE_INFERENCE_MAX_SIDE` | Maximum inference image side, default `960` |
+| `VISIONMATE_YOLO_CONFIDENCE` | Detection threshold, default `0.2`; lower values may add false positives |
+| `VISIONMATE_YOLO_MAX_DETECTIONS` | Maximum objects returned per frame, default `100` |
 | `VISIONMATE_ROUTING_PROVIDER` | `mock` or `osrm` |
 | `VISIONMATE_OSRM_BASE_URL` | OSRM endpoint |
 | `VISIONMATE_CORS_ORIGINS` | Allowed frontend origins |
+| `VISIONMATE_TURN_THRESHOLDS_M` | Mapped turn prompt distances in meters, default `500,200,100,30` |
 
 No paid LLM key is required.
 
 ## Model download
 
-On first YOLO run, Ultralytics downloads `yolov8n.pt`. If download or GPU setup fails, the API falls back to **mock perception**. Demo scenes still drive the full agentic loop.
+On first run, Ultralytics downloads `yolo11s.pt`. If that model cannot load, the backend tries `yolov8n.pt` before falling back to mock perception. Larger models and 960-pixel inference can take longer, especially on CPU.
+
+The default is tuned to retain more small or lower-confidence detections than the earlier nano / 640-pixel setup. Lower confidence thresholds can also add false positives. Model accuracy varies with camera quality, lighting, viewpoint, and object type; validate on representative recorded scenes before relying on the output. The pretrained model does not recognize every mobility hazard, and VisionMate remains an experimental prototype.
 
 Stairs, curbs, potholes, and sidewalk accessibility are **not** in the pretrained COCO classes and are documented as future work.
 
@@ -129,6 +136,10 @@ All simulated detections and mock routes are labeled in the UI.
 4. If YOLO is unavailable, detections will be empty (mock). Use demo scenes for a reliable agent demo.
 
 Do not test unsupervised outdoors. Use a recorded or controlled scene.
+
+## Navigation voice prompts
+
+On the Navigation screen, choose **Turn on location** to grant browser location access. VisionMate uses accurate GPS fixes and mapped maneuver points to announce route distances. On a simulated route, the developer demo buttons send labeled simulated GPS fixes. Location prompts describe mapped directions only; they do not assess whether a crossing or path is safe.
 
 ## Testing
 

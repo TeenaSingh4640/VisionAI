@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import logging
 from uuid import uuid4
 
@@ -13,12 +14,19 @@ from app.schemas.models import BoundingBox, DetectedObject, Observation, utc_now
 
 logger = logging.getLogger("visionmate.demo")
 
-TRACKER = SimpleIOUTracker()
+TRACKERS: dict[str, SimpleIOUTracker] = {}
 
 
 def decode_image(image_base64: str) -> np.ndarray:
     settings = get_settings()
-    raw = base64.b64decode(image_base64.split(",")[-1], validate=False)
+    encoded = image_base64.split(",")[-1]
+    # Reject oversized inputs before allocating the decoded byte buffer.
+    if len(encoded) > ((settings.frame_max_bytes + 2) // 3) * 4:
+        raise ValueError("Image exceeds maximum allowed size")
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("Image must be valid base64 data") from exc
     if len(raw) > settings.frame_max_bytes:
         raise ValueError("Image exceeds maximum allowed size")
     arr = np.frombuffer(raw, dtype=np.uint8)
@@ -78,13 +86,14 @@ DEMO_SCENES = {
 }
 
 
-def demo_observation(scene: str, persist: bool = True) -> Observation:
+def demo_observation(scene: str, persist: bool = True, *, session_id: str = "default") -> Observation:
     spec = DEMO_SCENES.get(scene)
     if spec is None:
         raise ValueError(f"Unknown demo scene: {scene}")
     objects = [DetectedObject(class_name=o["class_name"], confidence=o["confidence"], bbox=BoundingBox(**o["bbox"])) for o in spec["objects"]]
     if persist:
-        objects = TRACKER.update(objects)
+        tracker = TRACKERS.setdefault(session_id, SimpleIOUTracker())
+        objects = tracker.update(objects)
     return Observation(
         timestamp=utc_now(),
         frame_id=f"demo_{scene}_{uuid4().hex[:6]}",

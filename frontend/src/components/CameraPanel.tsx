@@ -13,7 +13,7 @@ export function CameraPanel() {
   const [backendWarning, setBackendWarning] = useState("");
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [running, setRunning] = useState(false);
-  const timer = useRef<number>();
+  const timer = useRef<number | undefined>(undefined);
   const inferenceInFlight = useRef(false);
   const objects: DetectedObject[] = session?.latest_observation?.objects ?? [];
 

@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     env: str = "development"
     host: str = "0.0.0.0"
     port: int = 8000
-    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,https://visionai-2723.onrender.com"
 
     perception_mode: Literal["auto", "yolo", "mock"] = "auto"
     yolo_model: str = "yolo11s.pt"

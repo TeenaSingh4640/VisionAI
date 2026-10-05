@@ -13,7 +13,7 @@ export function CameraPanel() {
   const [backendWarning, setBackendWarning] = useState("");
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [running, setRunning] = useState(false);
-  const timer = useRef<number | undefined>(undefined);
+  const timer = useRef<ReturnType<typeof window.setTimeout> | undefined>(undefined);
   const objects: DetectedObject[] = session?.latest_observation?.objects ?? [];
 
   useEffect(() => {
@@ -105,7 +105,7 @@ export function CameraPanel() {
     if (videoRef.current) videoRef.current.srcObject = null;
     setRunning(false);
     setCamState("idle");
-    if (timer.current) window.clearInterval(timer.current);
+    if (timer.current) window.clearTimeout(timer.current);
   }
 
   useEffect(() => {
@@ -113,7 +113,10 @@ export function CameraPanel() {
       if (timer.current) window.clearInterval(timer.current);
       return;
     }
-    timer.current = window.setInterval(() => {
+
+    let cancelled = false;
+
+    const captureFrame = () => {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       if (!video || !canvas || video.readyState < 2) return;
@@ -128,8 +131,26 @@ export function CameraPanel() {
       } catch {
         setBackendWarning("Live camera is on, but frame analysis failed. Check that the backend is connected.");
       }
-    }, 450);
-    return () => { if (timer.current) window.clearInterval(timer.current); };
+    };
+
+    // Adaptive loop: capture a frame, then wait at least MIN_INTERVAL ms before
+    // scheduling the next capture. Because submitFrame drops frames when a request
+    // is already in-flight, we use a generous interval (2 s) that roughly matches
+    // the backend's observed processing time on Render, avoiding 429 floods.
+    const MIN_INTERVAL_MS = 2000;
+
+    const loop = () => {
+      if (cancelled) return;
+      captureFrame();
+      timer.current = window.setTimeout(loop, MIN_INTERVAL_MS);
+    };
+
+    loop();
+
+    return () => {
+      cancelled = true;
+      if (timer.current) window.clearTimeout(timer.current);
+    };
   }, [running, session?.session_id, session?.demo_mode, session?.session_status, submitFrame]);
 
   useEffect(() => {

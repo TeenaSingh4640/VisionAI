@@ -55,15 +55,13 @@ export default function Dashboard() {
           <span><Mic size={17} /> Or say, <strong>“Start assistance”</strong></span><span className="mic-bubble"><Mic size={18} /></span>
         </button>
 
-        {session && (
-          <section className="home-camera-preview">
-            <div className="home-camera-header">
-              <span><Camera size={16} /> Live Camera</span>
-              <Link to="/app/scan" className="home-camera-expand">Full scan <ChevronRight size={14} /></Link>
-            </div>
-            <CameraPanel />
-          </section>
-        )}
+        <section className="home-camera-preview">
+          <div className="home-camera-header">
+            <span><Camera size={16} /> Live Camera</span>
+            <Link to="/app/scan" className="home-camera-expand">Full scan <ChevronRight size={14} /></Link>
+          </div>
+          <CameraPanel />
+        </section>
 
         <section className="quick-section">
           <h2>Quick Actions</h2>

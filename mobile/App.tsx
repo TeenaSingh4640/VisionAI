@@ -318,7 +318,8 @@ export default function App() {
     isCameraReady.current = false; // reset on each mount cycle
     const timer = setInterval(async () => {
       if (frameBusy.current || !camera.current || !sessionRef.current) return;
-      if (!isCameraReady.current) return; // wait until onCameraReady fires
+      // Layer 1: wait for onCameraReady to fire
+      if (!isCameraReady.current) return;
       frameBusy.current = true;
       let originalUri: string | undefined;
       let resizedUri: string | undefined;
@@ -342,8 +343,13 @@ export default function App() {
           const error = await response.json().catch(() => ({}));
           setStatus(response.status === 429 ? 'Camera is catching up; skipping this frame.' : `Camera frame rejected: ${error.detail || `HTTP ${response.status}`}`);
         }
-      } catch { setStatus('Camera frame could not be analyzed. Check the camera and network.'); }
-      finally {
+      } catch (err) {
+        // Layer 3: silently skip transient "not enough camera data" errors — the
+        // video buffer simply hasn't filled yet; the next interval tick will succeed.
+        const msg = err instanceof Error ? err.message.toLowerCase() : '';
+        if (msg.includes('not enough camera data') || msg.includes('enough camera') || msg.includes('no data')) return;
+        setStatus('Camera frame could not be analyzed. Check the camera and network.');
+      } finally {
         if (resizedUri && resizedUri !== originalUri) void FileSystem.deleteAsync(resizedUri, { idempotent: true }).catch(() => undefined);
         if (originalUri) void FileSystem.deleteAsync(originalUri, { idempotent: true }).catch(() => undefined);
         frameBusy.current = false;
@@ -439,7 +445,11 @@ export default function App() {
           <Text style={styles.sectionTitle}>Quick actions</Text>
           <Text style={styles.body}>Camera and route guidance run independently.</Text>
           <ActionButton secondary title={cameraOn ? 'Pause camera' : 'Describe surroundings'} onPress={() => void toggleCamera()} />
-          {cameraOn && <View style={styles.cameraBox}><CameraView ref={camera} style={styles.camera} facing="back" onCameraReady={() => { isCameraReady.current = true; }} /></View>}
+          {cameraOn && <View style={styles.cameraBox}><CameraView ref={camera} style={styles.camera} facing="back" onCameraReady={() => {
+            // Layer 2: wait 1.5 s after the event fires so the video buffer is
+            // guaranteed to be filled before takePictureAsync is called.
+            setTimeout(() => { isCameraReady.current = true; }, 1500);
+          }} /></View>}
           <Text style={styles.sceneHeading}>Latest guidance</Text><Text style={styles.sceneText}>{lastSummary}</Text>
         </View>}
         <Text style={styles.disclaimer}>Prototype guidance only. It does not verify that a path or crossing is safe.</Text>

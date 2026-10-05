@@ -51,6 +51,7 @@ export default function App() {
   const sessionRef = useRef<Session | null>(null);
   const locationSub = useRef<Location.LocationSubscription | null>(null);
   const frameBusy = useRef(false);
+  const isCameraReady = useRef(false);
   const demoPositionIndex = useRef(0);
   const gpsWarningAt = useRef(0);
 
@@ -314,8 +315,10 @@ export default function App() {
 
   useEffect(() => {
     if (!cameraOn || !session) return;
+    isCameraReady.current = false; // reset on each mount cycle
     const timer = setInterval(async () => {
       if (frameBusy.current || !camera.current || !sessionRef.current) return;
+      if (!isCameraReady.current) return; // wait until onCameraReady fires
       frameBusy.current = true;
       let originalUri: string | undefined;
       let resizedUri: string | undefined;
@@ -346,7 +349,10 @@ export default function App() {
         frameBusy.current = false;
       }
     }, 3000);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      isCameraReady.current = false;
+    };
   }, [cameraOn, session?.session_id]);
 
   const stopSession = async () => {
@@ -433,7 +439,7 @@ export default function App() {
           <Text style={styles.sectionTitle}>Quick actions</Text>
           <Text style={styles.body}>Camera and route guidance run independently.</Text>
           <ActionButton secondary title={cameraOn ? 'Pause camera' : 'Describe surroundings'} onPress={() => void toggleCamera()} />
-          {cameraOn && <View style={styles.cameraBox}><CameraView ref={camera} style={styles.camera} facing="back" /></View>}
+          {cameraOn && <View style={styles.cameraBox}><CameraView ref={camera} style={styles.camera} facing="back" onCameraReady={() => { isCameraReady.current = true; }} /></View>}
           <Text style={styles.sceneHeading}>Latest guidance</Text><Text style={styles.sceneText}>{lastSummary}</Text>
         </View>}
         <Text style={styles.disclaimer}>Prototype guidance only. It does not verify that a path or crossing is safe.</Text>

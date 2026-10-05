@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { ArrowRight, AudioLines, Camera, ChevronRight, LocateFixed, Mic, Settings2, Sparkles, Volume2 } from "lucide-react";
 import { Header } from "../components/Header";
+import { CameraPanel } from "../components/CameraPanel";
 import { useSession } from "../context/SessionContext";
 import { listenOnce, speak } from "../services/voice";
 
@@ -53,6 +54,16 @@ export default function Dashboard() {
         <button className="voice-command" onClick={() => void voiceCommand()}>
           <span><Mic size={17} /> Or say, <strong>“Start assistance”</strong></span><span className="mic-bubble"><Mic size={18} /></span>
         </button>
+
+        {session && (
+          <section className="home-camera-preview">
+            <div className="home-camera-header">
+              <span><Camera size={16} /> Live Camera</span>
+              <Link to="/app/scan" className="home-camera-expand">Full scan <ChevronRight size={14} /></Link>
+            </div>
+            <CameraPanel />
+          </section>
+        )}
 
         <section className="quick-section">
           <h2>Quick Actions</h2>

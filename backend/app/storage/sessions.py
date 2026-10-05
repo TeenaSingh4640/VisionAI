@@ -11,6 +11,7 @@ from app.schemas.models import (
     LocationFix,
     Observation,
     RouteResult,
+    SelectedDestination,
     SessionEvent,
     UserPreferences,
     utc_now,
@@ -44,12 +45,25 @@ class SessionState:
     announced_audio_keys: set[str] = field(default_factory=set)
     object_track_streaks: dict[str, int] = field(default_factory=dict)
     nav_announced_thresholds: set[str] = field(default_factory=set)
+    selected_destination: SelectedDestination | None = None
+    navigation_status: str = "idle"
+    navigation_active: bool = False
+    navigation_last_progress_m: float | None = None
+    navigation_deviation_samples: int = 0
+    navigation_next_instruction: int = 0
+    navigation_next_distance_m: float | None = None
 
     def to_public_dict(self) -> dict:
         return {
             "session_id": self.session_id,
             "user_goal": self.user_goal,
             "destination": self.destination,
+            "selected_destination": self.selected_destination.model_dump() if self.selected_destination else None,
+            "navigation_status": self.navigation_status,
+            "navigation_active": self.navigation_active,
+            "navigation_last_progress_m": self.navigation_last_progress_m,
+            "navigation_next_instruction": self.navigation_next_instruction,
+            "navigation_next_distance_m": self.navigation_next_distance_m,
             "route": self.route.model_dump() if self.route else None,
             "alternative_route": self.alternative_route.model_dump() if self.alternative_route else None,
             "current_location": self.current_location.model_dump() if self.current_location else None,
@@ -105,6 +119,8 @@ class SessionStore:
             state = self._sessions.get(session_id)
             if state:
                 state.session_status = "stopped"
+                state.navigation_active = False
+                state.navigation_status = "stopped"
             return state
 
     def append_event(self, session_id: str, event: SessionEvent) -> None:

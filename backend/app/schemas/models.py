@@ -116,6 +116,22 @@ class RouteResult(BaseModel):
     alternative_available: bool = False
 
 
+class PlaceCandidate(BaseModel):
+    place_id: str
+    name: str
+    context: str
+    lat: float
+    lon: float
+    source: str = "OpenStreetMap"
+
+
+class SelectedDestination(BaseModel):
+    name: str
+    lat: float
+    lon: float
+    simulated: bool = False
+
+
 class CommunicationMessage(BaseModel):
     text: str
     category: MessageCategory

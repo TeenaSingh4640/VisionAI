@@ -122,3 +122,48 @@ def test_object_voice_waits_for_persistent_detection_and_does_not_claim_signal_s
     assert len(events) == 1
     assert "signal state is not assessed" in events[0].text
     assert object_events(session, obs) == []
+
+
+def test_navigation_progress_uses_route_geometry_and_announces_once():
+    from app.navigation.guidance import navigation_update
+    from app.navigation.service import MockRoutingProvider
+    from app.storage.sessions import SessionState
+    from app.schemas.models import LocationFix
+
+    route = MockRoutingProvider().get_route((12.9716, 77.5946), (12.975, 77.605))
+    session = SessionState(session_id="progress", navigation_active=True, navigation_status="active")
+    origin = LocationFix(lat=12.9717, lon=77.5946, accuracy_m=5, simulated=True)
+    events, deviated = navigation_update(session, route, origin)
+    assert not deviated
+    assert session.navigation_next_distance_m is not None
+    first = [event for event in events if event.category == "turn_instruction"]
+    assert len(first) == 1
+    assert "500 meters" in first[0].text
+
+    events, _ = navigation_update(session, route, origin)
+    assert not [event for event in events if event.category == "turn_instruction"]
+
+
+def test_route_deviation_requires_three_accurate_fixes():
+    from app.navigation.guidance import navigation_update
+    from app.navigation.service import MockRoutingProvider
+    from app.storage.sessions import SessionState
+    from app.schemas.models import LocationFix
+
+    route = MockRoutingProvider().get_route((12.9716, 77.5946), (12.975, 77.605))
+    session = SessionState(session_id="deviation", navigation_active=True, navigation_status="active")
+    off_route = LocationFix(lat=12.99, lon=77.62, accuracy_m=5, simulated=True)
+    assert navigation_update(session, route, off_route)[1] is False
+    assert navigation_update(session, route, off_route)[1] is False
+    assert navigation_update(session, route, off_route)[1] is True
+
+
+def test_audio_event_queue_payload_has_expiry_and_priority():
+    from app.communication.audio_events import hazard_audio
+    from app.schemas.models import HazardEvent
+
+    hazard = HazardEvent(classification="possible_obstacle", priority="high", reasoning="object detected")
+    event = hazard_audio(hazard, "Pause and check.")
+    assert event is not None
+    assert event.priority == 1
+    assert event.expires_after_ms > 0

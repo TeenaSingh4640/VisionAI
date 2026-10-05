@@ -10,6 +10,7 @@ from app.schemas.models import (
     HazardEvent,
     LocationFix,
     Observation,
+    PlaceCandidate,
     RouteResult,
     UserPreferences,
 )
@@ -68,6 +69,31 @@ class RouteRequest(BaseModel):
     dest_lat: float | None = None
     dest_lon: float | None = None
     simulate_failure: bool = False
+
+
+class NavigationPreviewRequest(BaseModel):
+    session_id: str
+    destination: str = Field(min_length=2, max_length=160)
+    dest_lat: float = Field(ge=-90, le=90)
+    dest_lon: float = Field(ge=-180, le=180)
+    origin_lat: float = Field(ge=-90, le=90)
+    origin_lon: float = Field(ge=-180, le=180)
+    origin_accuracy_m: float = Field(gt=0, le=1000)
+    simulated: bool = False
+
+
+class NavigationStartRequest(BaseModel):
+    session_id: str
+
+
+class NavigationControlRequest(BaseModel):
+    session_id: str
+    action: Literal["pause", "resume", "stop"]
+
+
+class PlacesResponse(BaseModel):
+    places: list[PlaceCandidate]
+    attribution: str = "© OpenStreetMap contributors"
 
 
 class DemoSceneRequest(BaseModel):

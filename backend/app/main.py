@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import time
 import threading
+from datetime import datetime
+from uuid import uuid4
 from starlette.concurrency import run_in_threadpool
 from contextlib import asynccontextmanager
 
@@ -14,8 +16,9 @@ from app.communication.service import CommunicationService, TEMPLATES
 from app.communication.audio_events import hazard_audio, object_events
 from app.core.config import get_settings
 from app.events.broker import broker
-from app.navigation.service import get_navigation_service
-from app.navigation.guidance import guidance_event
+from app.navigation.service import MockRoutingProvider, get_navigation_service
+from app.navigation.guidance import navigation_update
+from app.navigation.places import PlaceSearchError, get_place_searcher
 from app.perception.demo import decode_image, demo_observation
 from app.perception.engine import get_perception_engine
 from app.schemas.api import (
@@ -23,6 +26,9 @@ from app.schemas.api import (
     DemoSceneRequest,
     GenericOk,
     LocationRequest,
+    NavigationControlRequest,
+    NavigationPreviewRequest,
+    NavigationStartRequest,
     ObservationRequest,
     ObservationResponse,
     RouteRequest,
@@ -30,7 +36,7 @@ from app.schemas.api import (
     SessionStartResponse,
     SessionStopRequest,
 )
-from app.schemas.models import SessionEvent, utc_now
+from app.schemas.models import AudioEvent, LocationFix, SelectedDestination, SessionEvent, utc_now
 from app.storage.sessions import store
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -272,11 +278,171 @@ async def location(body: LocationRequest):
         session = store.require(body.session_id)
     except KeyError:
         raise HTTPException(404, "Unknown session")
+    previous = session.current_location
+    if previous and previous.timestamp and body.location.timestamp:
+        try:
+            if datetime.fromisoformat(body.location.timestamp) <= datetime.fromisoformat(previous.timestamp):
+                return GenericOk(detail="stale location ignored")
+        except ValueError:
+            pass
     session.current_location = body.location
-    audio = guidance_event(session.route, body.location, session.nav_announced_thresholds)
-    if audio:
+    was_navigation_active = session.navigation_active
+    events, deviation = navigation_update(session, session.route, body.location)
+    for audio in events:
         await emit(session.session_id, "audio_event", audio.model_dump())
+    if deviation and session.navigation_status == "active" and session.selected_destination:
+        session.navigation_status = "recalculating"
+        session.navigation_deviation_samples = 0
+        warning = AudioEvent(
+            event_id=str(uuid4()), source="navigation", category="route_update", priority=2,
+            text="You appear to be away from the mapped route. Recalculating directions. Please pause in a safe place.",
+            created_at=utc_now(), expires_after_ms=15_000,
+            deduplication_key=f"deviation:{session.route.route_id if session.route else 'none'}",
+            simulated=body.location.simulated,
+        )
+        await emit(session.session_id, "audio_event", warning.model_dump())
+        selected = session.selected_destination
+        origin = (body.location.lat, body.location.lon)
+        destination = (selected.lat, selected.lon)
+        if selected.simulated and body.location.simulated:
+            updated_route = await run_in_threadpool(MockRoutingProvider().get_route, origin, destination)
+        elif get_navigation_service().provider.name != "mock":
+            updated_route = await run_in_threadpool(get_navigation_service().get_route, origin, destination)
+        else:
+            updated_route = None
+        if updated_route and updated_route.status == "available":
+            session.route = updated_route
+            session.navigation_status = "active"
+            session.navigation_last_progress_m = None
+            session.navigation_deviation_samples = 0
+            session.nav_announced_thresholds.clear()
+            update_audio = AudioEvent(
+                event_id=str(uuid4()), source="navigation", category="route_update", priority=3,
+                text="The mapped route has been updated. Check the next instruction and your surroundings.",
+                created_at=utc_now(), expires_after_ms=15_000,
+                deduplication_key=f"route-updated:{updated_route.route_id}", simulated=updated_route.is_simulated,
+            )
+            await emit(session.session_id, "audio_event", update_audio.model_dump())
+        else:
+            session.navigation_active = False
+            session.navigation_status = "recalculation_failed"
+            session.navigation_deviation_samples = 0
+            failure = AudioEvent(
+                event_id=str(uuid4()), source="navigation", category="system_alert", priority=2,
+                text="I could not update the route. Please stop in a safe place and try again.",
+                created_at=utc_now(), expires_after_ms=20_000,
+                deduplication_key="route-recalculation-failed", simulated=selected.simulated,
+            )
+            await emit(session.session_id, "audio_event", failure.model_dump())
+    if was_navigation_active:
+        await emit(session.session_id, "session", session.to_public_dict())
     return GenericOk()
+
+
+@app.get("/api/places/search")
+async def places_search(q: str):
+    query = " ".join(q.split())
+    if len(query) < 2 or len(query) > 160:
+        raise HTTPException(422, "Search text must be between 2 and 160 characters")
+    try:
+        places = await get_place_searcher().search(query)
+    except PlaceSearchError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return {"places": [place.model_dump() for place in places], "attribution": "© OpenStreetMap contributors"}
+
+
+@app.post("/api/navigation/preview")
+async def navigation_preview(body: NavigationPreviewRequest):
+    try:
+        session = store.require(body.session_id)
+    except KeyError:
+        raise HTTPException(404, "Unknown session")
+    if body.origin_accuracy_m > 50:
+        raise HTTPException(422, "Location accuracy is too low. Wait for a more accurate GPS fix.")
+    origin = (body.origin_lat, body.origin_lon)
+    destination = (body.dest_lat, body.dest_lon)
+    if body.simulated:
+        result = await run_in_threadpool(MockRoutingProvider().get_route, origin, destination)
+    else:
+        navigation = get_navigation_service()
+        if navigation.provider.name == "mock":
+            raise HTTPException(503, "Live walking routes are not configured. Use demo mode or configure a foot-capable OSRM provider.")
+        result = await run_in_threadpool(navigation.get_route, origin, destination)
+    if result.status != "available":
+        raise HTTPException(502, result.error or "No route was returned")
+    session.route = result
+    session.destination = body.destination
+    session.selected_destination = SelectedDestination(
+        name=body.destination, lat=body.dest_lat, lon=body.dest_lon, simulated=body.simulated,
+    )
+    session.current_location = LocationFix(
+        lat=body.origin_lat, lon=body.origin_lon, accuracy_m=body.origin_accuracy_m,
+        timestamp=utc_now(), simulated=body.simulated,
+    )
+    session.navigation_active = False
+    session.navigation_status = "preview"
+    session.navigation_last_progress_m = None
+    session.navigation_deviation_samples = 0
+    session.nav_announced_thresholds.clear()
+    session.navigation_next_distance_m = None
+    await emit(session.session_id, "session", session.to_public_dict())
+    return result
+
+
+@app.post("/api/navigation/start")
+async def navigation_start(body: NavigationStartRequest):
+    try:
+        session = store.require(body.session_id)
+    except KeyError:
+        raise HTTPException(404, "Unknown session")
+    if not session.selected_destination or not session.route or session.route.status != "available":
+        raise HTTPException(409, "Preview and confirm a destination before starting navigation")
+    session.navigation_active = True
+    session.navigation_status = "active"
+    nav_events, _ = navigation_update(session, session.route, session.current_location) if session.current_location else ([], False)
+    for nav_event in nav_events:
+        await emit(session.session_id, "audio_event", nav_event.model_dump())
+    event = AudioEvent(
+        event_id=str(uuid4()), source="navigation", category="route_update", priority=3,
+        text=f"Navigation started to {session.selected_destination.name}. The mapped route is approximately {round((session.route.distance_m or 0) / 100) / 10} kilometers. Start along the mapped route and check your surroundings.",
+        created_at=utc_now(), expires_after_ms=20_000,
+        deduplication_key=f"navigation-started:{session.route.route_id}",
+        simulated=session.route.is_simulated,
+    )
+    await emit(session.session_id, "audio_event", event.model_dump())
+    await emit(session.session_id, "session", session.to_public_dict())
+    return {"ok": True, "navigation_status": session.navigation_status, "route": session.route.model_dump()}
+
+
+@app.post("/api/navigation/control")
+async def navigation_control(body: NavigationControlRequest):
+    try:
+        session = store.require(body.session_id)
+    except KeyError:
+        raise HTTPException(404, "Unknown session")
+    if body.action == "pause":
+        session.navigation_active = False
+        session.navigation_status = "paused"
+        phrase = "Navigation paused."
+    elif body.action == "resume":
+        if not session.route or not session.selected_destination:
+            raise HTTPException(409, "No confirmed route to resume")
+        session.navigation_active = True
+        session.navigation_status = "active"
+        phrase = "Navigation resumed."
+    else:
+        session.navigation_active = False
+        session.navigation_status = "stopped"
+        phrase = "Navigation stopped."
+    event = AudioEvent(
+        event_id=str(uuid4()), source="navigation", category="system_alert", priority=3,
+        text=phrase, created_at=utc_now(), expires_after_ms=8_000,
+        deduplication_key=f"navigation-{body.action}:{session.session_id}:{time.monotonic_ns()}",
+        simulated=bool(session.selected_destination and session.selected_destination.simulated),
+    )
+    await emit(session.session_id, "audio_event", event.model_dump())
+    await emit(session.session_id, "session", session.to_public_dict())
+    return {"ok": True, "navigation_status": session.navigation_status}
 
 
 @app.post("/api/navigation/route")

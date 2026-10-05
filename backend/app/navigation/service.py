@@ -7,6 +7,7 @@ from uuid import uuid4
 import httpx
 
 from app.core.config import get_settings
+from app.navigation.guidance import distance_m
 from app.schemas.models import RouteInstruction, RouteResult
 
 logger = logging.getLogger("visionmate.navigation")
@@ -73,16 +74,19 @@ class MockRoutingProvider(RoutingProvider):
             [origin[1], origin[0] + 0.0045],
             [destination[1], destination[0]],
         ]
+        distance_to_turn = distance_m(origin[0], origin[1], origin[0] + 0.0045, origin[1])
+        distance_after_turn = distance_m(origin[0] + 0.0045, origin[1], destination[0], destination[1])
+        mapped_distance = distance_to_turn + distance_after_turn
         return RouteResult(
             route_id=str(uuid4()),
             provider="mock",
             status="available",
-            distance_m=850,
-            duration_s=720,
+            distance_m=mapped_distance,
+            duration_s=mapped_distance / 1.2,
             instructions=[
                 RouteInstruction(
                     instruction="Turn right on the mapped route",
-                    distance_m=500,
+                    distance_m=distance_after_turn,
                     maneuver_type="turn",
                     maneuver_modifier="right",
                     maneuver_location=[origin[1], origin[0] + 0.0045],
@@ -122,7 +126,8 @@ class OSRMRoutingProvider(RoutingProvider):
             )
         settings = get_settings()
         coords = f"{origin[1]},{origin[0]};{destination[1]},{destination[0]}"
-        url = f"{settings.osrm_base_url.rstrip('/')}/route/v1/foot/{coords}"
+        profile = settings.osrm_profile.strip().lower()
+        url = f"{settings.osrm_base_url.rstrip('/')}/route/v1/{profile}/{coords}"
         params = {"overview": "full", "geometries": "geojson", "steps": "true", "alternatives": "true" if alternative else "false"}
         try:
             with httpx.Client(timeout=settings.routing_timeout_s) as client:

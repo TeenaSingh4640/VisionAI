@@ -22,11 +22,15 @@ class Settings(BaseSettings):
 
     routing_provider: Literal["mock", "osrm"] = "mock"
     osrm_base_url: str = "https://router.project-osrm.org"
+    osrm_profile: str = "foot"
     routing_timeout_s: float = 8.0
+    nominatim_base_url: str = "https://nominatim.openstreetmap.org"
+    nominatim_user_agent: str = "VisionMate/0.1.0 (destination search)"
+    nominatim_timeout_s: float = 8.0
 
     sqlite_path: str = ""
     obs_min_interval_ms: int = 350
-    turn_thresholds_m: str = "500,200,100,30"
+    turn_thresholds_m: str = "500,200,50"
 
     @property
     def cors_origin_list(self) -> list[str]:

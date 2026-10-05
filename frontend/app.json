@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "VisionMate",
+    "slug": "visionmate",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "visionmate",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.visionmate.app"
+    },
+    "android": {
+      "package": "com.visionmate.app",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "VisionMate uses the camera to detect possible objects and hazards."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "VisionMate uses your location for route guidance."
+        }
+      ],
+      "expo-status-bar"
+    ]
+  }
+}

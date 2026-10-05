@@ -1,6 +1,14 @@
 import type { HealthInfo, Observation, SessionState, UserPreferences } from "../types";
 
-const API = "/api";
+declare const process: {
+  env: {
+    EXPO_PUBLIC_API_URL?: string;
+  };
+};
+
+// Prefer the environment variable from .env, with a fallback to your computer's LAN IP and port
+const BASE_HOST = process.env.EXPO_PUBLIC_API_URL || "http://192.168.1.7:8005";
+const API = `${BASE_HOST.replace(/\/$/, "")}/api`;
 
 async function json<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const res = await fetch(input, {
@@ -61,4 +69,10 @@ export const api = {
     json(`${API}/session/${session_id}/preferences`, { method: "PATCH", body: JSON.stringify(prefs) }),
   location: (session_id: string, location: { lat: number; lon: number; heading?: number; accuracy_m?: number; timestamp?: string; simulated?: boolean }) =>
     json(`${API}/location`, { method: "POST", body: JSON.stringify({ session_id, location }) }),
+};
+
+// WebSocket URL builder for App.tsx live stream events
+export const sessionSocketUrl = (sessionId: string): string => {
+  const wsBase = BASE_HOST.replace(/^http:/, "ws:").replace(/^https:/, "wss:").replace(/\/$/, "");
+  return `${wsBase}/api/session/${sessionId}/ws`;
 };

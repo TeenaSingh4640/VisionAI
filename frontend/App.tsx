@@ -15,7 +15,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { api, sessionSocketUrl } from "./src/services/api";
+import { api, backoffMs, isApiError, sessionSocketUrl, sleep } from "./src/services/api";
 import type { AudioEvent, HealthInfo, SessionState } from "./src/types";
 
 type Screen = "home" | "live" | "settings";
@@ -44,53 +44,147 @@ export default function App() {
   const [latestAudio, setLatestAudio] = useState("No spoken update yet.");
   const cameraRef = useRef<CameraView>(null!);
   const socketRef = useRef<WebSocket | null>(null);
+  const sessionRef = useRef<SessionState | null>(null);
+  const observationInFlight = useRef(false);
+  const stateInFlight = useRef(false);
+  const cameraEnabledRef = useRef(false);
+  const mutedRef = useRef(false);
+  sessionRef.current = session;
+  cameraEnabledRef.current = cameraEnabled;
+  mutedRef.current = muted;
 
   useEffect(() => {
     api.health().then(setHealth).catch(() => setError(`Backend unavailable at ${apiUrl}`));
   }, []);
 
   useEffect(() => {
-    if (!session?.session_id) return;
-    const socket = new WebSocket(sessionSocketUrl(session.session_id));
-    socketRef.current = socket;
-    socket.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data) as { type: string; payload: SessionState | AudioEvent };
-        if (message.type === "session") setSession(message.payload as SessionState);
-        if (message.type === "audio_event") {
-          const audio = message.payload as AudioEvent;
-          setLatestAudio(audio.text);
-          if (!muted) Speech.speak(audio.text, { rate: session.user_preferences.voice_rate || 1 });
+    if (!session?.session_id || session.session_status === "stopped") {
+      socketRef.current?.close();
+      socketRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    let attempts = 0;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const connect = () => {
+      if (cancelled) return;
+      const existing = socketRef.current;
+      if (existing && (existing.readyState === WebSocket.OPEN || existing.readyState === WebSocket.CONNECTING)) return;
+      const socket = new WebSocket(sessionSocketUrl(session.session_id));
+      socketRef.current = socket;
+      socket.onopen = () => {
+        attempts = 0;
+        console.log("[WebSocket] connected");
+      };
+      socket.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data) as { type: string; payload: SessionState | AudioEvent };
+          if (message.type === "session") setSession(message.payload as SessionState);
+          if (message.type === "audio_event") {
+            const audio = message.payload as AudioEvent;
+            setLatestAudio(audio.text);
+            if (!mutedRef.current) Speech.speak(audio.text, { rate: sessionRef.current?.user_preferences.voice_rate || 1 });
+          }
+        } catch {
+          setError("Received an invalid event from the VisionMate backend.");
         }
-      } catch {
-        setError("Received an invalid event from the VisionMate backend.");
-      }
+      };
+      socket.onerror = () => {
+        /* onclose reconnects; keep the current UI. */
+      };
+      socket.onclose = () => {
+        console.log("[WebSocket] disconnected");
+        if (socketRef.current === socket) socketRef.current = null;
+        if (cancelled || sessionRef.current?.session_status === "stopped") return;
+        if (attempts >= 8) {
+          setError("Live event connection lost. Status updates may be delayed.");
+          return;
+        }
+        const delay = backoffMs(attempts, 600, 15000);
+        attempts += 1;
+        reconnectTimer = setTimeout(connect, delay);
+      };
     };
-    socket.onerror = () => setError("Live event connection lost. Status updates may be delayed.");
+
+    connect();
     return () => {
-      socket.close();
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      socketRef.current?.close();
       socketRef.current = null;
     };
-  }, [session?.session_id, muted]);
+  }, [session?.session_id, session?.session_status === "stopped"]);
 
   useEffect(() => {
     if (!session?.session_id || session.session_status === "stopped") return;
-    const timer = setInterval(() => {
-      api.state(session.session_id).then(setSession).catch(() => setError("Could not refresh session status."));
-    }, 3000);
+    const timer = setInterval(async () => {
+      if (stateInFlight.current) return;
+      if (socketRef.current?.readyState === WebSocket.OPEN) return;
+      stateInFlight.current = true;
+      console.log("[State] polling request started");
+      try {
+        setSession(await api.state(session.session_id));
+        console.log("[State] polling request completed");
+      } catch (err) {
+        if (isApiError(err) && (err.status === 502 || err.status === 503 || err.status === 0)) {
+          setError("Backend temporarily unavailable. Retrying status updates…");
+        }
+      } finally {
+        stateInFlight.current = false;
+      }
+    }, 2000);
     return () => clearInterval(timer);
   }, [session?.session_id, session?.session_status]);
 
   useEffect(() => {
     if (!session?.session_id || !cameraEnabled || !cameraPermission?.granted) return;
-    const timer = setInterval(async () => {
-      const picture = await cameraRef.current?.takePictureAsync({ base64: true, quality: 0.55, skipProcessing: true });
-      if (picture?.base64) {
-        try { await api.observation(session.session_id, picture.base64); }
-        catch { setError("Camera frame could not be analyzed."); }
+    let cancelled = false;
+
+    const pump = async () => {
+      if (observationInFlight.current) return;
+      observationInFlight.current = true;
+      let rateFailures = 0;
+      try {
+        while (!cancelled && cameraEnabledRef.current && sessionRef.current) {
+          const current = sessionRef.current;
+          if (current.session_status === "paused" || current.session_status === "stopped") break;
+          console.log("[Observation] frame captured");
+          const picture = await cameraRef.current?.takePictureAsync({ base64: true, quality: 0.55, skipProcessing: true });
+          if (cancelled || !picture?.base64) break;
+          const started = Date.now();
+          console.log("[Observation] request started");
+          try {
+            await api.observation(current.session_id, picture.base64);
+            rateFailures = 0;
+            console.log(`[Observation] request completed in ${Date.now() - started} ms`);
+          } catch (err) {
+            if (isApiError(err) && err.status === 429) {
+              console.log("[Observation] backend returned 429");
+              await sleep(backoffMs(rateFailures, 500, 6000));
+              rateFailures += 1;
+              continue;
+            }
+            if (isApiError(err) && (err.status === 502 || err.status === 503 || err.status === 0)) {
+              setError("Backend temporarily unavailable. Camera frames will resume after a short wait.");
+              await sleep(backoffMs(rateFailures, 800, 8000));
+              rateFailures += 1;
+              if (rateFailures >= 6) break;
+              continue;
+            }
+            setError("Camera frame could not be analyzed.");
+            await sleep(800);
+          }
+        }
+      } finally {
+        observationInFlight.current = false;
       }
-    }, 2500);
-    return () => clearInterval(timer);
+    };
+
+    void pump();
+    return () => {
+      cancelled = true;
+    };
   }, [session?.session_id, cameraEnabled, cameraPermission?.granted]);
 
   async function start(demoMode: boolean) {
@@ -100,7 +194,11 @@ export default function App() {
       setSession(await api.state(created.session_id));
       setScreen("live");
       say("Assistance session started. I will describe possible hazards conservatively.");
-    } catch { setError("Could not start the assistance session."); }
+    } catch (err) {
+      setError(isApiError(err) && (err.status === 502 || err.status === 0)
+        ? "Backend temporarily unavailable. Try starting the session again."
+        : "Could not start the assistance session.");
+    }
   }
 
   async function stop() {

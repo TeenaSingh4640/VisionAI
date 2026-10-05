@@ -520,9 +520,8 @@ async def update_prefs(session_id: str, body: dict):
     return session.user_preferences
 
 
-@app.websocket("/api/session/{session_id}/ws")
-async def ws_session(websocket: WebSocket, session_id: str):
-    await websocket.accept()
+async def _run_session_socket(websocket: WebSocket, session_id: str) -> None:
+    # broker.connect() accepts the socket once. Accepting twice breaks the handshake.
     await broker.connect(session_id, websocket)
     try:
         state = store.get(session_id)
@@ -534,3 +533,13 @@ async def ws_session(websocket: WebSocket, session_id: str):
         await broker.disconnect(session_id, websocket)
     except Exception:
         await broker.disconnect(session_id, websocket)
+
+
+@app.websocket("/ws/session/{session_id}")
+async def ws_session(websocket: WebSocket, session_id: str):
+    await _run_session_socket(websocket, session_id)
+
+
+@app.websocket("/api/session/{session_id}/ws")
+async def ws_session_legacy(websocket: WebSocket, session_id: str):
+    await _run_session_socket(websocket, session_id)

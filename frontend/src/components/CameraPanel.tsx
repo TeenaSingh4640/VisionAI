@@ -14,7 +14,6 @@ export function CameraPanel() {
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [running, setRunning] = useState(false);
   const timer = useRef<number | undefined>(undefined);
-  const inferenceInFlight = useRef(false);
   const objects: DetectedObject[] = session?.latest_observation?.objects ?? [];
 
   useEffect(() => {
@@ -110,23 +109,32 @@ export function CameraPanel() {
   }
 
   useEffect(() => {
-    if (!running || !session || session.demo_mode || session.session_status === "paused") return;
-    timer.current = window.setInterval(async () => {
+    if (!running || !session?.session_id || session.demo_mode || session.session_status === "paused" || session.session_status === "stopped") {
+      if (timer.current) window.clearInterval(timer.current);
+      return;
+    }
+    timer.current = window.setInterval(() => {
       const video = videoRef.current;
       const canvas = canvasRef.current;
-      if (inferenceInFlight.current || !video || !canvas || video.readyState < 2) return;
-      inferenceInFlight.current = true;
+      if (!video || !canvas || video.readyState < 2) return;
       canvas.width = 960;
       canvas.height = 540;
       const ctx = canvas.getContext("2d");
-      if (!ctx) { inferenceInFlight.current = false; return; }
+      if (!ctx) return;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      try { await submitFrame(canvas.toDataURL("image/jpeg", 0.82)); }
-      catch { setBackendWarning("Live camera is on, but frame analysis failed. Check that the backend is connected."); }
-      finally { inferenceInFlight.current = false; }
-    }, 2200);
+      try {
+        console.log("[Observation] frame captured");
+        submitFrame(canvas.toDataURL("image/jpeg", 0.82));
+      } catch {
+        setBackendWarning("Live camera is on, but frame analysis failed. Check that the backend is connected.");
+      }
+    }, 450);
     return () => { if (timer.current) window.clearInterval(timer.current); };
-  }, [running, session, submitFrame]);
+  }, [running, session?.session_id, session?.demo_mode, session?.session_status, submitFrame]);
+
+  useEffect(() => {
+    if (session?.session_status === "stopped") stopCamera();
+  }, [session?.session_status]);
 
   useEffect(() => () => stopCamera(), []);
 

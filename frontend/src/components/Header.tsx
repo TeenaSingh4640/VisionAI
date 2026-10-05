@@ -3,7 +3,7 @@ import { ArrowLeft, AudioLines, CircleUserRound, Eye, Home as HomeIcon, ScanEye,
 import { useSession } from "../context/SessionContext";
 
 export function Header() {
-  const { connected, session } = useSession();
+  const { connected, session, error } = useSession();
   const location = useLocation();
   const title = location.pathname.includes("settings")
     ? "Profile settings"
@@ -16,6 +16,7 @@ export function Header() {
           : "Home guidance";
 
   return (
+    <>
     <header className="mobile-header">
       <div className="brand-lockup">
         {location.pathname !== "/app" && (
@@ -36,6 +37,8 @@ export function Header() {
         </NavLink>
       </div>
     </header>
+    {error ? <div className="connection-banner" role="status">{error}</div> : null}
+    </>
   );
 }
 

@@ -520,9 +520,8 @@ async def update_prefs(session_id: str, body: dict):
     return session.user_preferences
 
 
-@app.websocket("/ws/session/{session_id}")
+@app.websocket("/api/session/{session_id}/ws")
 async def ws_session(websocket: WebSocket, session_id: str):
-    # Explicitly accept the connection first to prevent handshake/origin 403 rejections
     await websocket.accept()
     await broker.connect(session_id, websocket)
     try:
